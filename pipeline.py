@@ -4,8 +4,7 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import numpy as np
 import cv2
-import math
-import os
+import pickle
 
 
 def grayscale(img):
@@ -14,189 +13,233 @@ def grayscale(img):
     # return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 
-def canny(img, low_threshold, high_threshold):
-    return cv2.Canny(img, low_threshold, high_threshold)
+def undistort(img, objpoints, imgpoints):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints,
+                                                       imgpoints,
+                                                       gray.shape[::-1],
+                                                       None,
+                                                       None)
+    undist = cv2.undistort(img, mtx, dist, None, mtx)
+    return undist
 
 
-def gaussian_blur(img, kernel_size):
-    return cv2.GaussianBlur(img, (kernel_size, kernel_size), 0)
+# Displays a comparison of an image and another
+# Parameter for saving the file?
+def display_comparison(img, undistorted_img):
+    f, (ax1, ax2) = plt.subplots(1, 2, figsize=(24, 9))
+    f.tight_layout()
+    ax1.imshow(img)
+    ax1.set_title("Original Image", fontsize=50)
+    ax2.imshow(undistorted_img)
+    ax2.set_title("Altered Image", fontsize=50)
+    plt.subplots_adjust(left=0., right=1, top=0.9, bottom=0.)
+    plt.show()
 
 
-def region_of_interest(img, vertices):
-    # Defining a blank mask to start with
-    mask = np.zeros_like(img)
-
-    # defining a 3 channel or 1 channel color to fill the mask with depending
-    # on the input image
-    if len(img.shape) > 2:
-        channel_count = img.shape[2]  # i.e. 3 or 4 depending on your image
-        ignore_mask_color = (255,) * channel_count
-    else:
-        ignore_mask_color = 255
-
-    # Filling pixels inside the polygon defined by "vertices" with
-    # the fill color
-    cv2.fillPoly(mask, vertices, ignore_mask_color)
-
-    # returning the image only where mask pixels are nonzero
-    masked_image = cv2.bitwise_and(img, mask)
-    return masked_image
+# Warps an area of an image to a new perspective
+# Set up for birds eye view of road in front of car
+def warp(img):
+    offset = 200
+    img_size = (img.shape[1], img.shape[0])
+    src = np.float32([[190, 720],
+                      [1125, 720],
+                      [593, 450],
+                      [687, 450]])
+    dst = np.float32([[300, img_size[1]],
+                      [980, img_size[1]],
+                      [300, 0],
+                      [980, 0]])
+    M = cv2.getPerspectiveTransform(src, dst)
+    Minv = cv2.getPerspectiveTransform(dst, src)
+    warped = cv2.warpPerspective(img, M, img_size)
+    return warped, M, Minv
 
 
-# Given two points with x and y coordinates,
-# return the slope of the line between them
-def calc_slope(x1, y1, x2, y2):
-    return (y2 - y1)/(x2 - x1)
+# Uses Soble and HSL color channels to find all steep gradients in
+# image
+# Could use other channels or the y direction
+def gradient_thresh(img, s_thresh=(170, 255), sx_thresh=(20, 100)):
+    img = np.copy(img)
+    # Convert to HSV color space and separate the V channel
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HLS).astype(np.float)
+    l_channel = hsv[:, :, 1]
+    s_channel = hsv[:, :, 2]
+    # Sobel x
+    sobelx = cv2.Sobel(l_channel, cv2.CV_64F, 1, 0)
+    abs_sobelx = np.absolute(sobelx)
+    scaled_sobel = np.uint8(255*abs_sobelx/np.max(abs_sobelx))
+
+    # Threshold x gradient
+    sxbinary = np.zeros_like(scaled_sobel)
+    sxbinary[(scaled_sobel >= sx_thresh[0]) &
+             (scaled_sobel <= sx_thresh[1])] = 1
+
+    # Threshold color channel
+    combined = np.zeros_like(s_channel)
+    combined[((s_channel >= s_thresh[0]) &
+             (s_channel <= s_thresh[1])) |
+             (sxbinary == 1)] = 1
+    # Stack each channel
+    # Note color_binary[:, :, 0] is all 0s, effectively an all black image.
+    # It might be beneficial to replace this channel with something else.
+    # color_binary = np.dstack((np.zeros_like(sxbinary), sxbinary, s_binary))
+    return combined
 
 
-# Given the slope of a line, and the x and y coordinates of a
-# point on that line, return the y intercept for slope-intercept form
-def calc_y_intercept(x, y, m):
-    return y - m * x
+def sliding_window_search(img):
+    # Generate histogram of the bottom of the image
+
+    # Assuming you have created a warped binary image called "img"
+    # Take a histogram of the bottom half of the image
+    histogram = np.sum(img[img.shape[0] // 2:, :], axis=0)
+    # Create an output image to draw on and  visualize the result
+    out_img = np.dstack((img, img, img))*255
+    # Find the peak of the left and right halves of the histogram
+    # These will be the starting point for the left and right lines
+    midpoint = np.int(histogram.shape[0]/2)
+    leftx_base = np.argmax(histogram[:midpoint])
+    rightx_base = np.argmax(histogram[midpoint:]) + midpoint
+
+    # Choose the number of sliding windows
+    nwindows = 9
+    # Set height of windows
+    window_height = np.int(img.shape[0]/nwindows)
+    # Identify the x and y positions of all nonzero pixels in the image
+    nonzero = img.nonzero()
+    nonzeroy = np.array(nonzero[0])
+    nonzerox = np.array(nonzero[1])
+    # Current positions to be updated for each window
+    leftx_current = leftx_base
+    rightx_current = rightx_base
+    # Set the width of the windows +/- margin
+    margin = 100
+    # Set minimum number of pixels found to recenter window
+    minpix = 50
+    # Create empty lists to receive left and right lane pixel indices
+    left_lane_inds = []
+    right_lane_inds = []
+
+    # Step through the windows one by one
+    for window in range(nwindows):
+        # Identify window boundaries in x and y (and right and left)
+        win_y_low = img.shape[0] - (window+1)*window_height
+        win_y_high = img.shape[0] - window*window_height
+        win_xleft_low = leftx_current - margin
+        win_xleft_high = leftx_current + margin
+        win_xright_low = rightx_current - margin
+        win_xright_high = rightx_current + margin
+        # Draw the windows on the visualization image
+        cv2.rectangle(out_img,
+                      (win_xleft_low, win_y_low),
+                      (win_xleft_high, win_y_high),
+                      (0, 255, 0),
+                      2)
+        cv2.rectangle(out_img,
+                      (win_xright_low, win_y_low),
+                      (win_xright_high, win_y_high),
+                      (0, 255, 0),
+                      2)
+        # Identify the nonzero pixels in x and y within the window
+        good_left_inds = ((nonzeroy >= win_y_low) &
+                          (nonzeroy < win_y_high) &
+                          (nonzerox >= win_xleft_low) &
+                          (nonzerox < win_xleft_high)).nonzero()[0]
+        good_right_inds = ((nonzeroy >= win_y_low) &
+                           (nonzeroy < win_y_high) &
+                           (nonzerox >= win_xright_low) &
+                           (nonzerox < win_xright_high)).nonzero()[0]
+        # Append these indices to the lists
+        left_lane_inds.append(good_left_inds)
+        right_lane_inds.append(good_right_inds)
+        # If you found > minpix pixels, recenter next window on their
+        # mean position
+        if len(good_left_inds) > minpix:
+            leftx_current = np.int(np.mean(nonzerox[good_left_inds]))
+        if len(good_right_inds) > minpix:
+            rightx_current = np.int(np.mean(nonzerox[good_right_inds]))
+
+    # Concatenate the arrays of indices
+    left_lane_inds = np.concatenate(left_lane_inds)
+    right_lane_inds = np.concatenate(right_lane_inds)
+
+    # Extract left and right line pixel positions
+    leftx = nonzerox[left_lane_inds]
+    lefty = nonzeroy[left_lane_inds]
+    rightx = nonzerox[right_lane_inds]
+    righty = nonzeroy[right_lane_inds]
+
+    # Fit a second order polynomial to each
+    left_fit = np.polyfit(lefty, leftx, 2)
+    right_fit = np.polyfit(righty, rightx, 2)
+
+    # Generate x and y values for plotting
+    ploty = np.linspace(0, img.shape[0]-1, img.shape[0])
+    left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+    right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+
+    out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
+    out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
+    return ploty, left_fitx, right_fitx
 
 
-# Given the slope and y intercept of a line, as well as a y
-# value on the line, return the associated x value
-def calc_x_from_line(y, m, b):
-    return (y - b)/m
+def draw_lines(undist, warped, ploty, left_fitx, right_fitx, Minv):
+    # Create an image to draw the lines on
+    warp_zero = np.zeros_like(warped).astype(np.uint8)
+    color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
+
+    # Recast the x and y points into usable format for cv2.fillPoly()
+    pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
+    pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx,
+                                                            ploty])))])
+    pts = np.hstack((pts_left, pts_right))
+
+    # Draw the lane onto the warped blank image
+    cv2.fillPoly(color_warp, np.int_([pts]), (0, 255, 0))
+
+    # Warp the blank back to original image space using
+    # inverse perspective matrix (Minv)
+    newwarp = cv2.warpPerspective(color_warp, Minv, (undist.shape[1],
+                                                     undist.shape[0]))
+    # Combine the result with the original image
+    result = cv2.addWeighted(undist, 1, newwarp, 0.3, 0)
+    plt.imshow(result)
+    plt.show()
 
 
-# Given a list of values, calculate the mean
-def calc_list_avg(list):
-    return sum(list)/len(list)
-
-
-def draw_lines(img, lines, color=[255, 0, 0], thickness=5):
-    # Initialize lists to hold x and y values of the lines
-    # Would like to refactor
-    right_x1 = []
-    right_x2 = []
-    right_y1 = []
-    right_y2 = []
-    left_x1 = []
-    left_x2 = []
-    left_y1 = []
-    left_y2 = []
-
-    for line in lines:
-        for x1, y1, x2, y2 in line:
-            # Calculate slope to determine what side the line is on
-            # Filter out approximately horizontal lines
-            # If negative slope, add points to left side
-            # If positive, add to right side
-            if calc_slope(x1, y1, x2, y2) < -.55:
-                left_x1.append(x1)
-                left_x2.append(x2)
-                left_y1.append(y1)
-                left_y2.append(y2)
-            elif calc_slope(x1, y1, x2, y2) > .55:
-                right_x1.append(x1)
-                right_x2.append(x2)
-                right_y1.append(y1)
-                right_y2.append(y2)
-
-    # Create best fit lines based on points from either side
-    # Would like to refactor
-    # Left side
-    l_x1 = calc_list_avg(left_x1)
-    l_x2 = calc_list_avg(left_x2)
-    l_y1 = calc_list_avg(left_y1)
-    l_y2 = calc_list_avg(left_y2)
-    l_m = calc_slope(l_x1, l_y1, l_x2, l_y2)
-    l_b = calc_y_intercept(l_x1, l_y1, l_m)
-    l_x_bottom = int(calc_x_from_line(img.shape[0], l_m, l_b))
-    l_x_top = int(calc_x_from_line(img.shape[0]*.593, l_m, l_b))
-    cv2.line(img, (l_x_bottom, img.shape[0]),
-             (l_x_top, int(img.shape[0]*.593)), color, thickness)
-    # Right side
-    r_x1 = calc_list_avg(right_x1)
-    r_x2 = calc_list_avg(right_x2)
-    r_y1 = calc_list_avg(right_y1)
-    r_y2 = calc_list_avg(right_y2)
-    r_m = calc_slope(r_x1, r_y1, r_x2, r_y2)
-    r_b = calc_y_intercept(r_x1, r_y1, r_m)
-    r_x_bottom = int(calc_x_from_line(img.shape[0], r_m, r_b))
-    r_x_top = int(calc_x_from_line(img.shape[0]*.593, r_m, r_b))
-    cv2.line(img, (r_x_bottom, img.shape[0]),
-             (r_x_top, int(img.shape[0]*.593)), color, thickness)
-
-
-def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap):
-    lines = cv2.HoughLinesP(img, rho, theta, threshold, np.array([]),
-                            minLineLength=min_line_len,
-                            maxLineGap=max_line_gap)
-    line_img = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
-    draw_lines(line_img, lines)
-    return line_img
-
-
-def weighted_img(img, initial_img, α=0.8, β=1., λ=0.):
-    return cv2.addWeighted(initial_img, α, img, β, λ)
-
-
-def process_image(image):
+def pipeline(imgpoints, objpoints):
+    img = cv2.imread("test_images/test1.jpg")
     # Get the image size
-    imshape = image.shape
-
-    # Canny parameters
-    low_threshold = 50
-    high_threshold = 150
-    blur_kernel = 5
-
-    # Image mask parameters, as a function of image size
-    vertices = np.array([[(imshape[1]*.132, imshape[0]),
-                          (imshape[1]*.469, imshape[0]*.593),
-                          (imshape[1]*.531, imshape[0]*.593),
-                          (imshape[1]*.938, imshape[0])]],
-                        dtype=np.int32)
-
-    # Hough transform parameters
-    rho = 2
-    theta = np.pi/180
-    hough_threshold = 15
-    min_line_length = 35
-    max_line_gap = 20
-
+    imshape = img.shape
     # # # BEGIN PIPELINE # # #
-    # Convert the image to grayscale, and apply a gaussian blur
-    gs_img = grayscale(image)
-    blur_img = gaussian_blur(gs_img, blur_kernel)
-    # Perform Canny edge detection on the blurred grayscale
-    canny_img = canny(gs_img, low_threshold, high_threshold)
-    # Mask off polygonal area
-    # Determine dynamically in the future?
-    masked_img = region_of_interest(canny_img, vertices)
-    # Retrieve lines from Hough transform
-    img_lines = hough_lines(masked_img, rho, theta, hough_threshold,
-                            min_line_length, max_line_gap)
-    result = weighted_img(img_lines, np.copy(image))
+    # img = mpimg.imread("test_images/straight_lines1.jpg")
+
+    # Unidstort using camera calibration data
+    undistorted = undistort(img, objpoints, imgpoints)
+    # display_comparison(img, undistorted)
+
+    # Distort to birds eye view
+    warped, M, Minv = warp(undistorted)
+
+    # Grayscale and mask
+    masked = gradient_thresh(warped)
+    display_comparison(warped, masked)
+
+    # Find lane line start points and fit polynomial
+    # ploty, left_fitx, right_fitx = sliding_window_search(masked)
+
+    # Reapply lines to original image
+    # draw_lines(undistorted, warped, ploty, left_fitx, right_fitx, Minv)
     # # # END PIPELINE # # #
-    return result
 
 
-# Cycle through images, process them, and save in same directory
-# Directory could be defined from cmdln or config file
-in_directory = "test_images"
-out_directory = in_directory + "_output/"
-in_directory += "/"
-for image in os.listdir(in_directory):
-    output_img = process_image(mpimg.imread(in_directory + image))
-    # Reorder color channels before saving
-    cv2.imwrite(out_directory + image,
-                cv2.cvtColor(output_img, cv2.COLOR_RGB2BGR))
+def main():
+    # Load calibration data
+    calibration_data = pickle.load(open("calibration_data.p", "rb"))
+    imgpoints, objpoints = map(calibration_data.get,
+                               ("imgpoints", "objpoints"))
+    pipeline(imgpoints, objpoints)
 
-# Generate white line video
-white_output = 'test_videos_output/solidWhiteRight.mp4'
-clip1 = VideoFileClip("test_videos/solidWhiteRight.mp4")
-white_clip = clip1.fl_image(process_image)
-white_clip.write_videofile(white_output, audio=False)
-# Generate yellow line video
-white_output = 'test_videos_output/solidYellowLeft.mp4'
-clip1 = VideoFileClip("test_videos/solidYellowLeft.mp4")
-white_clip = clip1.fl_image(process_image)
-white_clip.write_videofile(white_output, audio=False)
-# Generate challenge video
-white_output = 'test_videos_output/challenge.mp4'
-clip1 = VideoFileClip("test_videos/challenge.mp4")
-white_clip = clip1.fl_image(process_image)
-white_clip.write_videofile(white_output, audio=False)
+
+if __name__ == "__main__":
+    main()
