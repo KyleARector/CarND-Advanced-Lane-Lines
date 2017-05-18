@@ -36,7 +36,7 @@ def calibrate_camera(nx=9, ny=6):
             imgpoints.append(corners)
             objpoints.append(temp_objpoints)
             cv2.drawChessboardCorners(image, (nx, ny), corners, ret)
-        return objpoints, imgpoints
+    return objpoints, imgpoints
 
 
 def main():
