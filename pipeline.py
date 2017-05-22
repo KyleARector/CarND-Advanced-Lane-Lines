@@ -7,6 +7,8 @@ import cv2
 import pickle
 import os
 
+imgpoints, objpoints = [], []
+
 
 def grayscale(img):
     # Or use BGR2GRAY if you read an image with cv2.imread()
@@ -14,7 +16,7 @@ def grayscale(img):
     return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 
-def undistort(img, objpoints, imgpoints):
+def undistort(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints,
                                                        imgpoints,
@@ -285,10 +287,10 @@ def draw_labels(img, lane_curvature, offset):
     return img
 
 
-def pipeline(img, imgpoints, objpoints):
+def pipeline(img):
     # # # BEGIN PIPELINE # # #
     # Undistort using camera calibration data
-    undistorted = undistort(img, objpoints, imgpoints)
+    undistorted = undistort(img)
 
     gradx = abs_sobel_thresh(undistorted,
                              orient="x",
@@ -329,17 +331,21 @@ def pipeline(img, imgpoints, objpoints):
 
 
 def main():
+    global imgpoints, objpoints
     in_directory = "test_images/"
     out_directory = "output_images/"
     # Load calibration data
     calibration_data = pickle.load(open("calibration_data.p", "rb"))
     imgpoints, objpoints = map(calibration_data.get,
                                ("imgpoints", "objpoints"))
+    # Process all static images
     for image in os.listdir(in_directory):
-        out_img = pipeline(cv2.imread(in_directory + image),
-                           imgpoints,
-                           objpoints)
+        out_img = pipeline(cv2.imread(in_directory + image))
         cv2.imwrite(out_directory + image + "_lane_added", out_img)
+    video_output = "video_out.mp4"
+    clip1 = VideoFileClip("project_video.mp4")
+    video_clip = clip1.fl_image(pipeline)
+    video_clip.write_videofile(video_output, audio=False)
 
 
 if __name__ == "__main__":
