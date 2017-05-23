@@ -8,6 +8,7 @@ import pickle
 import os
 
 imgpoints, objpoints = [], []
+prev_fit = []
 
 
 def grayscale(img):
@@ -147,6 +148,7 @@ def calc_curvature_radius(img, left_fit, right_fit):
 
 
 def sliding_window_search(img):
+    global leftx_base, rightx_base, prev_fit
     # Generate histogram of the bottom of the image
     histogram = np.sum(img[img.shape[0] // 2:, :], axis=0)
     # Create an output image to draw on and  visualize the result
@@ -230,6 +232,8 @@ def sliding_window_search(img):
     left_fit = np.polyfit(lefty, leftx, 2)
     right_fit = np.polyfit(righty, rightx, 2)
 
+    prev_fit.append((left_fit, right_fit))
+
     lane_curvature = calc_curvature_radius(img, left_fit, right_fit)
 
     # Generate x and y values for plotting
@@ -239,6 +243,35 @@ def sliding_window_search(img):
 
     out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
     out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
+    return ploty, left_fitx, right_fitx, lane_curvature, offset
+
+
+def margin_search(img):
+    left_fit = prev_fit[0][0]
+    right_fit = prev_fit[0][1]
+    nonzero = img.nonzero()
+    nonzeroy = np.array(nonzero[0])
+    nonzerox = np.array(nonzero[1])
+    margin = 100
+    left_lane_inds = ((nonzerox > (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] - margin)) & (nonzerox < (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] + margin)))
+    right_lane_inds = ((nonzerox > (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] - margin)) & (nonzerox < (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] + margin)))
+
+    # Extract left and right line pixel positions
+    leftx = nonzerox[left_lane_inds]
+    lefty = nonzeroy[left_lane_inds]
+    rightx = nonzerox[right_lane_inds]
+    righty = nonzeroy[right_lane_inds]
+    # Fit a second order polynomial to each
+    left_fit = np.polyfit(lefty, leftx, 2)
+    right_fit = np.polyfit(righty, rightx, 2)
+
+    offset = calc_center_offset(img, leftx_base, rightx_base)
+    lane_curvature = calc_curvature_radius(img, left_fit, right_fit)
+
+    # Generate x and y values for plotting
+    ploty = np.linspace(0, img.shape[0]-1, img.shape[0])
+    left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+    right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
     return ploty, left_fitx, right_fitx, lane_curvature, offset
 
 
@@ -287,6 +320,13 @@ def draw_labels(img, lane_curvature, offset):
     return img
 
 
+# Process all static images in given directory
+def process_images(in_directory="test_images/", out_directory="output_images/"):
+    for image in os.listdir(in_directory):
+        out_img = pipeline(cv2.imread(in_directory + image))
+        cv2.imwrite(out_directory + image + "_lane_added", out_img)
+
+
 def pipeline(img):
     # # # BEGIN PIPELINE # # #
     # Undistort using camera calibration data
@@ -315,7 +355,10 @@ def pipeline(img):
     warped, M, Minv = warp(combined)
 
     # Find lane line start points and fit polynomial
-    ploty, left_fitx, right_fitx, lane_curvature, offset = sliding_window_search(warped)
+    if len(prev_fit) > 0:
+        ploty, left_fitx, right_fitx, lane_curvature, offset = margin_search(warped)
+    else:
+        ploty, left_fitx, right_fitx, lane_curvature, offset = sliding_window_search(warped)
 
     # Reapply lines to original image
     lined_img = draw_lines(undistorted,
@@ -338,10 +381,6 @@ def main():
     calibration_data = pickle.load(open("calibration_data.p", "rb"))
     imgpoints, objpoints = map(calibration_data.get,
                                ("imgpoints", "objpoints"))
-    # Process all static images
-    for image in os.listdir(in_directory):
-        out_img = pipeline(cv2.imread(in_directory + image))
-        cv2.imwrite(out_directory + image + "_lane_added", out_img)
     video_output = "video_out.mp4"
     clip1 = VideoFileClip("project_video.mp4")
     video_clip = clip1.fl_image(pipeline)
