@@ -247,6 +247,7 @@ def sliding_window_search(img):
 
 
 def margin_search(img):
+    global prev_fit
     left_fit = prev_fit[0][0]
     right_fit = prev_fit[0][1]
     nonzero = img.nonzero()
@@ -267,6 +268,7 @@ def margin_search(img):
 
     offset = calc_center_offset(img, leftx_base, rightx_base)
     lane_curvature = calc_curvature_radius(img, left_fit, right_fit)
+    prev_fit.append((left_fit, right_fit))
 
     # Generate x and y values for plotting
     ploty = np.linspace(0, img.shape[0]-1, img.shape[0])
@@ -328,6 +330,7 @@ def process_images(in_directory="test_images/", out_directory="output_images/"):
 
 
 def pipeline(img):
+    global prev_fit
     # # # BEGIN PIPELINE # # #
     # Undistort using camera calibration data
     undistorted = undistort(img)
@@ -357,9 +360,9 @@ def pipeline(img):
     # Find lane line start points and fit polynomial
     if len(prev_fit) > 0:
         ploty, left_fitx, right_fitx, lane_curvature, offset = margin_search(warped)
+        prev_fit.pop(0)
     else:
         ploty, left_fitx, right_fitx, lane_curvature, offset = sliding_window_search(warped)
-
     # Reapply lines to original image
     lined_img = draw_lines(undistorted,
                            warped,
