@@ -191,17 +191,7 @@ def sliding_window_search(img):
         win_xleft_high = leftx_current + margin
         win_xright_low = rightx_current - margin
         win_xright_high = rightx_current + margin
-        # Draw the windows on the visualization image
-        cv2.rectangle(out_img,
-                      (win_xleft_low, win_y_low),
-                      (win_xleft_high, win_y_high),
-                      (0, 255, 0),
-                      2)
-        cv2.rectangle(out_img,
-                      (win_xright_low, win_y_low),
-                      (win_xright_high, win_y_high),
-                      (0, 255, 0),
-                      2)
+
         # Identify the nonzero pixels in x and y within the window
         good_left_inds = ((nonzeroy >= win_y_low) &
                           (nonzeroy < win_y_high) &
@@ -318,7 +308,7 @@ def draw_lines(undist, warped, left_fit, right_fit, Minv):
     pts = np.hstack((pts_left, pts_right))
 
     # Draw the lane onto the warped blank image
-    cv2.fillPoly(color_warp, np.int_([pts]), (0, 255, 0))
+    cv2.fillPoly(color_warp, np.int_([pts]), (255, 114, 59))
 
     # Warp the blank back to original image space using
     # inverse perspective matrix (Minv)
@@ -354,7 +344,7 @@ def draw_labels(img, lane_curvature, offset):
 def process_images(in_directory, out_directory):
     for image in os.listdir(in_directory):
         out_img = pipeline(cv2.imread(in_directory + image), video=False)
-        cv2.imwrite(out_directory + image + "_lane_added", out_img)
+        cv2.imwrite(out_directory + "lane_added_" + image, out_img)
 
 
 def pipeline(img, video=True):
@@ -387,11 +377,11 @@ def pipeline(img, video=True):
 
     # Find lane line start points and fit polynomial
     # Compare fits against average of last few frames and correct
+    if len(prev_fit) != 0 and video:
+        left_fit, right_fit = margin_search(warped)
+    else:
+        left_fit, right_fit = sliding_window_search(warped)
     if video:
-        if len(prev_fit) != 0:
-            left_fit, right_fit = margin_search(warped)
-        else:
-            left_fit, right_fit = sliding_window_search(warped)
         left_fit, right_fit = check_fit_history(left_fit, right_fit)
 
     lane_curvature = calc_curvature_radius(warped, left_fit, right_fit)
