@@ -238,7 +238,7 @@ def margin_search(img):
     nonzero = img.nonzero()
     nonzeroy = np.array(nonzero[0])
     nonzerox = np.array(nonzero[1])
-    margin = 40
+    margin = 30
     left_lane_inds = ((nonzerox > (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] - margin)) & (nonzerox < (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] + margin)))
     right_lane_inds = ((nonzerox > (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] - margin)) & (nonzerox < (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] + margin)))
 
@@ -256,7 +256,7 @@ def margin_search(img):
     return left_fit, right_fit
 
 
-def check_fit_history(left_fit, right_fit, frame_count=15):
+def check_fit_history(left_fit, right_fit, frame_count=10):
     global prev_fit
 
     left_history.append(left_fit)
@@ -273,11 +273,11 @@ def check_fit_history(left_fit, right_fit, frame_count=15):
         right_fit_avg = np.average(right_history, axis=0)
 
         # Check the deviation of the average against the new fit
-        if np.absolute(left_fit_avg[0] - prev_fit[0][0]) <= .001:
+        if np.absolute(left_fit_avg[0] - prev_fit[0][0]) <= .0002:
             left_prev = left_fit_avg
         else:
             left_prev = left_fit
-        if np.absolute(right_fit_avg[0] - prev_fit[0][1]) <= .001:
+        if np.absolute(right_fit_avg[0] - prev_fit[0][1]) <= .0002:
             right_prev = right_fit_avg
         else:
             right_prev = right_fit
@@ -361,10 +361,10 @@ def pipeline(img, video=True):
                              orient="y",
                              thresh=(20, 100))
     mag_binary = mag_thresh(undistorted,
-                            sobel_kernel=9,
+                            sobel_kernel=3,
                             thresh=(30, 100))
     dir_binary = dir_threshold(undistorted,
-                               sobel_kernel=15,
+                               sobel_kernel=3,
                                thresh=(0.7, 1.3))
     sat_binary = sat_threshold(undistorted,
                                thresh=(200, 255))
