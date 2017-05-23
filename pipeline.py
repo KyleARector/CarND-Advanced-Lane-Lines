@@ -238,7 +238,7 @@ def margin_search(img):
     nonzero = img.nonzero()
     nonzeroy = np.array(nonzero[0])
     nonzerox = np.array(nonzero[1])
-    margin = 50
+    margin = 40
     left_lane_inds = ((nonzerox > (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] - margin)) & (nonzerox < (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] + margin)))
     right_lane_inds = ((nonzerox > (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] - margin)) & (nonzerox < (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] + margin)))
 
@@ -256,7 +256,7 @@ def margin_search(img):
     return left_fit, right_fit
 
 
-def check_fit_history(left_fit, right_fit, frame_count=10):
+def check_fit_history(left_fit, right_fit, frame_count=15):
     global prev_fit
 
     left_history.append(left_fit)
@@ -290,7 +290,7 @@ def check_fit_history(left_fit, right_fit, frame_count=10):
     return left_prev, right_prev
 
 
-def draw_lines(undist, warped, left_fit, right_fit, Minv):
+def draw_lines(undist, warped, left_fit, right_fit, Minv, video=False):
     # Create an image to draw the lines on
     warp_zero = np.zeros_like(warped).astype(np.uint8)
     color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
@@ -308,7 +308,8 @@ def draw_lines(undist, warped, left_fit, right_fit, Minv):
     pts = np.hstack((pts_left, pts_right))
 
     # Draw the lane onto the warped blank image
-    cv2.fillPoly(color_warp, np.int_([pts]), (255, 114, 59))
+    color = (59, 114, 255) if video else (255, 114, 59)
+    cv2.fillPoly(color_warp, np.int_([pts]), color)
 
     # Warp the blank back to original image space using
     # inverse perspective matrix (Minv)
@@ -392,7 +393,8 @@ def pipeline(img, video=True):
                            warped,
                            left_fit,
                            right_fit,
-                           Minv)
+                           Minv,
+                           video)
 
     out_img = draw_labels(lined_img, lane_curvature, offset)
     # # # END PIPELINE # # #
