@@ -47,8 +47,8 @@ def display_comparison(img, undistorted_img):
 def warp(img):
     offset = 200
     img_size = (img.shape[1], img.shape[0])
-    src = np.float32([[190, 720],
-                      [1125, 720],
+    src = np.float32([[190, img_size[1]],
+                      [1125, img_size[1]],
                       [593, 450],
                       [687, 450]])
     dst = np.float32([[300, img_size[1]],
